@@ -1,0 +1,15 @@
+---
+# Dedicated namespace for the mock LLM inference endpoint, its SLO
+# rules, and the load generator. The scrape path, alert path and
+# dashboard provisioning all come from existing stacks (vm-observability
+# for metrics, otel-logs-traces-stack for traces, kube-prometheus-stack
+# for Grafana) so this namespace stays small.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: inference
+  labels:
+    name: inference
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted

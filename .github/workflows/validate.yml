@@ -1,0 +1,72 @@
+---
+name: validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  yamllint:
+    name: yamllint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - uses: karancode/yamllint-github-action@v3.0.0
+        with:
+          yamllint_file_or_dir: 'manifests'
+          yamllint_strict: true
+          yamllint_config_filepath: '.yamllint'
+
+  kubeconform:
+    name: kubeconform
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - name: Install kubeconform
+        run: |
+          curl -sSfL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz \
+            | tar -xzf - -C /usr/local/bin kubeconform
+          kubeconform -v
+      # VictoriaMetrics CRDs (VMRule, VMServiceScrape) live in the
+      # datreeio/CRDs-catalog repo under the operator.victoriametrics.com
+      # group. kube-prometheus-stack CRDs (PrometheusRule) are in the same
+      # catalog under monitoring.coreos.com.
+      - name: Validate manifests
+        run: |
+          kubeconform \
+            -strict \
+            -ignore-missing-schemas \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            -summary \
+            manifests/
+
+  go-build:
+    name: go-build (vllm-mock)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - name: Check if Go code exists
+        id: check
+        run: |
+          if [ -f vllm-mock/go.mod ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "vllm-mock/go.mod not yet present - skipping Go build (scaffold-only commit)"
+          fi
+      - uses: actions/setup-go@v5.0.0
+        if: steps.check.outputs.exists == 'true'
+        with:
+          go-version: '1.23'
+          cache-dependency-path: vllm-mock/go.sum
+      - name: Build
+        if: steps.check.outputs.exists == 'true'
+        working-directory: vllm-mock
+        run: go build -v ./...
+      - name: Vet
+        if: steps.check.outputs.exists == 'true'
+        working-directory: vllm-mock
+        run: go vet ./...

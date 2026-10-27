@@ -1,0 +1,17 @@
+# VMRule with SLI recording rules + SLO burn-rate alerts lands here.
+# Core artifact of this project. See docs/slo-vocabulary.md for the math.
+#
+# Rules shipped in v0.1:
+#   inference:slo:availability_ratio_7d        (recording)
+#   inference:slo:ttft_p99_7d                  (recording)
+#   inference:slo:tpot_p99_7d                  (recording)
+#   inference:slo:availability_burn_rate_1h    (recording)
+#   inference:slo:availability_burn_rate_6h    (recording)
+#   inference:slo:ttft_burn_rate_1h            (recording)
+#   inference:slo:ttft_burn_rate_6h            (recording)
+#   InferenceAvailabilityBurnRateFast          (alert, severity=page)
+#   InferenceAvailabilityBurnRateSlow          (alert, severity=ticket)
+#   InferenceTTFTBurnRateFast                  (alert, severity=page)
+#   InferenceTTFTBurnRateSlow                  (alert, severity=ticket)
+#   InferenceTPOTBurnRateFast                  (alert, severity=page)
+#   InferenceTPOTBurnRateSlow                  (alert, severity=ticket)

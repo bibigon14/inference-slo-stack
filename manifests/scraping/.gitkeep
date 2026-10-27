@@ -1,0 +1,2 @@
+# VMServiceScrape for the vllm-mock /metrics endpoint lands here in v0.1.
+# Picked up by VMAgent from vm-observability via selectAllByDefault.

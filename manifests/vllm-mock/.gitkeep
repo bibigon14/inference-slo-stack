@@ -1,0 +1,4 @@
+# vllm-mock Deployment + Service land here in v0.1.
+# Planned files:
+#   deployment.yaml - Go HTTP server, 2 replicas, 128Mi RSS budget
+#   service.yaml    - ClusterIP :8000 for scrape + :8080 for /v1/chat

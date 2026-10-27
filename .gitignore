@@ -1,0 +1,20 @@
+# local scratch
+.DS_Store
+*.swp
+*.swo
+
+# Go build output
+/vllm-mock/vllm-mock
+/vllm-mock/vllm-mock-*
+
+# ad-hoc scripts kept out of history
+.scripts/
+.finalize-portfolio.sh
+.bootstrap.sh
+
+# kubeconfig snippets copied in for local kubectl
+kubeconfig*
+.kubeconfig*
+
+# screenshots staging
+docs/screenshots/_raw/
