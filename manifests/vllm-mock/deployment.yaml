@@ -1,0 +1,75 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-mock
+  namespace: inference
+  labels:
+    app.kubernetes.io/name: vllm-mock
+    app.kubernetes.io/component: inference-endpoint
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: vllm-mock
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: vllm-mock
+    spec:
+      securityContext:
+        runAsUser: 65532
+        runAsGroup: 65532
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: vllm-mock
+          image: vllm-mock:v0.1
+          # v0.1 ships via `docker save | k3s ctr images import` to the
+          # OCI VM; v0.2 will push to ghcr.io/bibigon14/vllm-mock via a
+          # GitHub Actions workflow.
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          env:
+            - name: MODEL_NAME
+              value: mistral-7b-instruct
+            - name: TTFT_MEDIAN_MS
+              value: '50'
+            - name: TTFT_SIGMA
+              value: '1.0'
+            - name: TPOT_MEDIAN_MS
+              value: '20'
+            - name: TPOT_SIGMA
+              value: '0.7'
+            - name: ERROR_RATE_PCT
+              value: '0.0'
+            - name: DEGRADED
+              value: 'false'
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              cpu: 500m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]

@@ -1,0 +1,315 @@
+---
+# SLO definitions + burn-rate alerts for the mock vLLM inference endpoint.
+# Full math and reasoning in docs/slo-vocabulary.md.
+#
+# Three SLIs, each with:
+#   - a recording rule for the SLI value (so Grafana reads it cheap)
+#   - a recording rule for the fast-burn rate (1h window)
+#   - a recording rule for the slow-burn rate (6h window)
+#   - two alert rules (fast = page, slow = ticket)
+#
+# Multi-window multi-burn-rate pattern straight from the Google SRE
+# Workbook, chapter 5 "Alerting on SLOs". Values picked for a 7d SLO:
+#   fast burn: 1h x 14.4 (burns full budget in ~5h)
+#   slow burn: 6h x 6    (burns full budget in ~16h)
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMRule
+metadata:
+  name: inference-slo
+  namespace: inference
+  labels:
+    app.kubernetes.io/name: inference-slo
+    app.kubernetes.io/component: slo-rules
+spec:
+  groups:
+    # ------------------------------------------------------------------
+    # Group 1: SLI recording rules
+    # ------------------------------------------------------------------
+    - name: inference.slis
+      interval: 30s
+      rules:
+        # Availability: fraction of requests that returned non-5xx
+        - record: inference:sli:availability_ratio_5m
+          expr: |
+            sum(rate(vllm:request_success_total{job="vllm-mock",status="success"}[5m]))
+            /
+            sum(rate(vllm:request_total{job="vllm-mock"}[5m]))
+
+        # p99 TTFT over 5m
+        - record: inference:sli:ttft_p99_5m
+          expr: |
+            histogram_quantile(
+              0.99,
+              sum by (le) (rate(vllm:time_to_first_token_seconds_bucket{job="vllm-mock"}[5m]))
+            )
+
+        # p99 TPOT over 5m
+        - record: inference:sli:tpot_p99_5m
+          expr: |
+            histogram_quantile(
+              0.99,
+              sum by (le) (rate(vllm:time_per_output_token_seconds_bucket{job="vllm-mock"}[5m]))
+            )
+
+    # ------------------------------------------------------------------
+    # Group 2: Burn-rate recording rules (one per SLO per window)
+    # ------------------------------------------------------------------
+    #
+    # Burn rate = error_rate / (1 - SLO).
+    # For a 99.9% SLO, (1 - SLO) = 0.001. A burn rate of 1.0 means the
+    # SLO is being met exactly; 14.4 means burning 14.4x faster than
+    # sustainable.
+    - name: inference.burn_rates
+      interval: 30s
+      rules:
+        # --- Availability (99.9% SLO) ---
+        - record: inference:slo:availability_burn_rate_1h
+          expr: |
+            (
+              sum(rate(vllm:request_total{job="vllm-mock"}[1h]))
+              -
+              sum(rate(vllm:request_success_total{job="vllm-mock",status="success"}[1h]))
+            )
+            /
+            sum(rate(vllm:request_total{job="vllm-mock"}[1h]))
+            /
+            (1 - 0.999)
+        - record: inference:slo:availability_burn_rate_6h
+          expr: |
+            (
+              sum(rate(vllm:request_total{job="vllm-mock"}[6h]))
+              -
+              sum(rate(vllm:request_success_total{job="vllm-mock",status="success"}[6h]))
+            )
+            /
+            sum(rate(vllm:request_total{job="vllm-mock"}[6h]))
+            /
+            (1 - 0.999)
+
+        # --- TTFT (99.9% of requests under 500ms, over 7d) ---
+        # "Error" for TTFT = request whose TTFT bucket is > 500ms.
+        # vllm:time_to_first_token_seconds_bucket{le="0.5"} is the cumulative
+        # count of requests with TTFT <= 500ms. The complement is "too slow".
+        - record: inference:slo:ttft_burn_rate_1h
+          expr: |
+            (
+              sum(rate(vllm:time_to_first_token_seconds_count{job="vllm-mock"}[1h]))
+              -
+              sum(rate(vllm:time_to_first_token_seconds_bucket{job="vllm-mock",le="0.5"}[1h]))
+            )
+            /
+            sum(rate(vllm:time_to_first_token_seconds_count{job="vllm-mock"}[1h]))
+            /
+            (1 - 0.999)
+        - record: inference:slo:ttft_burn_rate_6h
+          expr: |
+            (
+              sum(rate(vllm:time_to_first_token_seconds_count{job="vllm-mock"}[6h]))
+              -
+              sum(rate(vllm:time_to_first_token_seconds_bucket{job="vllm-mock",le="0.5"}[6h]))
+            )
+            /
+            sum(rate(vllm:time_to_first_token_seconds_count{job="vllm-mock"}[6h]))
+            /
+            (1 - 0.999)
+
+        # --- TPOT (99.9% of tokens under 50ms, over 7d) ---
+        - record: inference:slo:tpot_burn_rate_1h
+          expr: |
+            (
+              sum(rate(vllm:time_per_output_token_seconds_count{job="vllm-mock"}[1h]))
+              -
+              sum(rate(vllm:time_per_output_token_seconds_bucket{job="vllm-mock",le="0.05"}[1h]))
+            )
+            /
+            sum(rate(vllm:time_per_output_token_seconds_count{job="vllm-mock"}[1h]))
+            /
+            (1 - 0.999)
+        - record: inference:slo:tpot_burn_rate_6h
+          expr: |
+            (
+              sum(rate(vllm:time_per_output_token_seconds_count{job="vllm-mock"}[6h]))
+              -
+              sum(rate(vllm:time_per_output_token_seconds_bucket{job="vllm-mock",le="0.05"}[6h]))
+            )
+            /
+            sum(rate(vllm:time_per_output_token_seconds_count{job="vllm-mock"}[6h]))
+            /
+            (1 - 0.999)
+
+    # ------------------------------------------------------------------
+    # Group 3: Burn-rate alerts (page or ticket)
+    # ------------------------------------------------------------------
+    #
+    # Multi-window: a page fires only when BOTH the fast window (1h)
+    # AND a short confirmation window (5m) exceed the threshold. This
+    # cuts noise - a single bad minute does not page.
+    - name: inference.alerts
+      interval: 30s
+      rules:
+        # --- Availability ---
+        - alert: InferenceAvailabilityBurnRateFast
+          expr: |
+            inference:slo:availability_burn_rate_1h > 14.4
+            and
+            (
+              (
+                sum(rate(vllm:request_total{job="vllm-mock"}[5m]))
+                -
+                sum(rate(vllm:request_success_total{job="vllm-mock",status="success"}[5m]))
+              )
+              /
+              sum(rate(vllm:request_total{job="vllm-mock"}[5m]))
+              /
+              (1 - 0.999)
+            ) > 14.4
+          for: 2m
+          labels:
+            severity: page
+            slo: availability
+          annotations:
+            summary: Inference availability burning 14.4x faster than SLO allows
+            description: |
+              The inference endpoint is burning its 7d availability error
+              budget 14.4x faster than sustainable. At this rate the
+              full week's budget is gone in ~5 hours.
+              Current 1h burn rate: {{ $value | printf "%.1f" }}x.
+              Check vllm:num_requests_waiting and vllm:gpu_cache_usage_perc
+              for queue pressure / cache thrashing.
+
+        - alert: InferenceAvailabilityBurnRateSlow
+          expr: |
+            inference:slo:availability_burn_rate_6h > 6
+            and
+            (
+              (
+                sum(rate(vllm:request_total{job="vllm-mock"}[30m]))
+                -
+                sum(rate(vllm:request_success_total{job="vllm-mock",status="success"}[30m]))
+              )
+              /
+              sum(rate(vllm:request_total{job="vllm-mock"}[30m]))
+              /
+              (1 - 0.999)
+            ) > 6
+          for: 15m
+          labels:
+            severity: ticket
+            slo: availability
+          annotations:
+            summary: Inference availability slow-burning 6x faster than SLO allows
+            description: |
+              The inference endpoint is burning its 7d availability
+              error budget 6x faster than sustainable. Budget exhausted
+              in ~16 hours at this rate.
+              Current 6h burn rate: {{ $value | printf "%.1f" }}x.
+
+        # --- TTFT ---
+        - alert: InferenceTTFTBurnRateFast
+          expr: |
+            inference:slo:ttft_burn_rate_1h > 14.4
+            and
+            (
+              (
+                sum(rate(vllm:time_to_first_token_seconds_count{job="vllm-mock"}[5m]))
+                -
+                sum(rate(vllm:time_to_first_token_seconds_bucket{job="vllm-mock",le="0.5"}[5m]))
+              )
+              /
+              sum(rate(vllm:time_to_first_token_seconds_count{job="vllm-mock"}[5m]))
+              /
+              (1 - 0.999)
+            ) > 14.4
+          for: 2m
+          labels:
+            severity: page
+            slo: ttft
+          annotations:
+            summary: p99 TTFT burning 14.4x faster than SLO allows
+            description: |
+              Fraction of requests with TTFT above 500ms is 14.4x the
+              sustainable rate. Full 7d budget consumed in ~5 hours
+              at this pace.
+              Current 1h burn rate: {{ $value | printf "%.1f" }}x.
+              Likely culprits (in order): prompt length growth
+              (check avg prompt_tokens), KV cache pressure
+              (vllm:gpu_cache_usage_perc > 0.9), scheduler contention
+              (vllm:num_requests_waiting climbing).
+
+        - alert: InferenceTTFTBurnRateSlow
+          expr: |
+            inference:slo:ttft_burn_rate_6h > 6
+            and
+            (
+              (
+                sum(rate(vllm:time_to_first_token_seconds_count{job="vllm-mock"}[30m]))
+                -
+                sum(rate(vllm:time_to_first_token_seconds_bucket{job="vllm-mock",le="0.5"}[30m]))
+              )
+              /
+              sum(rate(vllm:time_to_first_token_seconds_count{job="vllm-mock"}[30m]))
+              /
+              (1 - 0.999)
+            ) > 6
+          for: 15m
+          labels:
+            severity: ticket
+            slo: ttft
+          annotations:
+            summary: p99 TTFT slow-burning 6x faster than SLO allows
+            description: |
+              Slow drift in prompt-processing latency. Current 6h
+              burn rate: {{ $value | printf "%.1f" }}x.
+
+        # --- TPOT ---
+        - alert: InferenceTPOTBurnRateFast
+          expr: |
+            inference:slo:tpot_burn_rate_1h > 14.4
+            and
+            (
+              (
+                sum(rate(vllm:time_per_output_token_seconds_count{job="vllm-mock"}[5m]))
+                -
+                sum(rate(vllm:time_per_output_token_seconds_bucket{job="vllm-mock",le="0.05"}[5m]))
+              )
+              /
+              sum(rate(vllm:time_per_output_token_seconds_count{job="vllm-mock"}[5m]))
+              /
+              (1 - 0.999)
+            ) > 14.4
+          for: 2m
+          labels:
+            severity: page
+            slo: tpot
+          annotations:
+            summary: p99 TPOT burning 14.4x faster than SLO allows
+            description: |
+              Per-output-token latency above 50ms on 14.4x the
+              sustainable fraction of tokens. This looks like
+              decode-side slowdown - GPU contention, model
+              offloading to CPU, inefficient streaming batching.
+              Current 1h burn rate: {{ $value | printf "%.1f" }}x.
+
+        - alert: InferenceTPOTBurnRateSlow
+          expr: |
+            inference:slo:tpot_burn_rate_6h > 6
+            and
+            (
+              (
+                sum(rate(vllm:time_per_output_token_seconds_count{job="vllm-mock"}[30m]))
+                -
+                sum(rate(vllm:time_per_output_token_seconds_bucket{job="vllm-mock",le="0.05"}[30m]))
+              )
+              /
+              sum(rate(vllm:time_per_output_token_seconds_count{job="vllm-mock"}[30m]))
+              /
+              (1 - 0.999)
+            ) > 6
+          for: 15m
+          labels:
+            severity: ticket
+            slo: tpot
+          annotations:
+            summary: p99 TPOT slow-burning 6x faster than SLO allows
+            description: |
+              Current 6h burn rate: {{ $value | printf "%.1f" }}x.

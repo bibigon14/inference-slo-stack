@@ -1,0 +1,16 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-mock
+  namespace: inference
+  labels:
+    app.kubernetes.io/name: vllm-mock
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: vllm-mock
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http

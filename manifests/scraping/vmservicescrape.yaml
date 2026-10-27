@@ -1,0 +1,23 @@
+---
+# VMAgent in the vm-observability stack scrapes any VMServiceScrape with
+# the matching selector. This points it at /metrics on vllm-mock port.
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMServiceScrape
+metadata:
+  name: vllm-mock
+  namespace: inference
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: vllm-mock
+  namespaceSelector:
+    matchNames: [inference]
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s
+      # Relabel: set job="vllm-mock" so SLO recording rules match.
+      relabelConfigs:
+        - targetLabel: job
+          replacement: vllm-mock

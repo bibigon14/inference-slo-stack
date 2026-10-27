@@ -62,6 +62,38 @@ sre.dstepanov.dev.
 - `docs/architecture.md` - request flow, OTEL instrumentation points,
   correlation story
 
+## Live on the OCI VM
+
+Deployed end-to-end on the shared Oracle Cloud Ampere A1 free-tier VM.
+Screenshots captured during a live run with the k6 CronJob actively
+driving traffic:
+
+![Grafana LLM Inference SLO dashboard: 4 Stat panels for Request Rate / Error Rate / p99 TTFT / p99 TPOT, burn-rate time series with 14.4 fast and 6 slow threshold bands, p99 TTFT and TPOT history panels with SLO threshold lines, queue depth and GPU KV cache usage](docs/screenshots/01-dashboard-overview.png)
+
+The burn-rate panel is the operator's "which SLO is on fire" view. In
+this capture TPOT is burning at 94.3x the sustainable rate (well above
+the 14.4 fast-burn threshold) while availability and TTFT stay quiet -
+exactly the signal that lets oncall jump straight to a decode-side
+investigation instead of chasing prompt-processing or availability
+red herrings:
+
+![Burn Rates panel full-screen: TPOT line sitting at 94x against the 14.4 threshold band, availability and TTFT lines near zero - clear which SLO burns](docs/screenshots/02-burn-rates-zoom.png)
+
+The vllm-mock service emits the exact vLLM 0.6.x metric families
+including `vllm:time_to_first_token_seconds` and
+`vllm:time_per_output_token_seconds` histograms with the same bucket
+boundaries real vLLM uses, so the SLO rules and dashboards port 1:1
+when the mock is swapped for real vLLM:
+
+![curl /metrics output showing vllm:generation_tokens_total, vllm:request_total, vllm:time_per_output_token_seconds histogram buckets at le=0.005..+Inf, matching real vLLM 0.6.x emission format](docs/screenshots/03-vllm-metrics-raw.png)
+
+VMRule as source - the multi-window multi-burn-rate pattern from the
+Google SRE Workbook, parameterized by SLI name and threshold. Reads
+as one copy of the same rule shape per SLO, which is how a mature SLO
+rule library should look:
+
+![VMRule YAML source showing SLI recording rules (availability_ratio_5m, ttft_p99_5m, tpot_p99_5m) and start of the burn-rate recording-rule block with the (error_rate / (1 - SLO)) formula applied to each SLI](docs/screenshots/04-vmrule-source.png)
+
 ## What's deliberately out of scope for v0.1
 
 - **Real vLLM** - requires GPU, which costs money and only shifts the

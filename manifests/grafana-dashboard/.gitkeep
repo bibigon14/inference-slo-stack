@@ -1,8 +1,0 @@
-# Grafana sidecar-provisioned dashboard ConfigMap (label grafana_dashboard=1).
-# Planned file: dashboard-llm-slo.yaml wrapping the "LLM Inference SLO" JSON.
-#
-# Panels:
-#   Row 1 - Burn rates per SLO (3 panels: availability, TTFT, TPOT)
-#   Row 2 - p99 TTFT + p99 TPOT (time series with exemplar overlay)
-#   Row 3 - vLLM internals: queue depth, running requests, KV cache usage
-#   Row 4 - Error budget remaining (gauge per SLO)

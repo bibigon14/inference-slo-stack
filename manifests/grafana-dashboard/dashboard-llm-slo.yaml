@@ -1,0 +1,253 @@
+---
+# Grafana dashboard "LLM Inference SLO" shipped via the sidecar
+# (grafana_dashboard=1 label). Reads from the Thanos/Prometheus
+# datasource that already powers the public kiosk at grafana.dstepanov.dev.
+#
+# Panels, left-to-right top-to-bottom:
+#   Row 1 (Stat): Request Rate | Error Rate | p99 TTFT | p99 TPOT
+#   Row 2 (Timeseries): Burn Rates (three SLOs on one axis, 14.4 threshold)
+#   Row 3 (Timeseries): p99 TTFT history + p99 TPOT history (with SLO threshold lines)
+#   Row 4 (Timeseries + Gauge): queue depth / running requests + GPU KV cache usage
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dashboard-llm-slo
+  namespace: monitoring
+  labels:
+    grafana_dashboard: '1'
+data:
+  llm-inference-slo.json: |
+    {
+      "title": "LLM Inference SLO",
+      "uid": "llm-inference-slo",
+      "schemaVersion": 39,
+      "version": 1,
+      "editable": true,
+      "refresh": "30s",
+      "time": {"from": "now-1h", "to": "now"},
+      "tags": ["slo", "llm", "inference", "ai", "portfolio"],
+      "templating": {
+        "list": [
+          {
+            "name": "datasource",
+            "type": "datasource",
+            "query": "prometheus",
+            "current": {"text": "Thanos", "value": "Thanos"},
+            "hide": 0
+          }
+        ]
+      },
+      "panels": [
+        {
+          "id": 1,
+          "type": "stat",
+          "title": "Request Rate",
+          "gridPos": {"x": 0, "y": 0, "w": 6, "h": 4},
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "targets": [
+            {
+              "expr": "sum(rate(vllm:request_total{job=\"vllm-mock\"}[5m]))",
+              "legendFormat": "req/s",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {"defaults": {"unit": "reqps", "decimals": 2}}
+        },
+        {
+          "id": 2,
+          "type": "stat",
+          "title": "Error Rate (5m)",
+          "gridPos": {"x": 6, "y": 0, "w": 6, "h": 4},
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "targets": [
+            {
+              "expr": "1 - inference:sli:availability_ratio_5m",
+              "legendFormat": "error",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "decimals": 4,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"color": "green", "value": null},
+                  {"color": "yellow", "value": 0.001},
+                  {"color": "red", "value": 0.01}
+                ]
+              }
+            }
+          }
+        },
+        {
+          "id": 3,
+          "type": "stat",
+          "title": "p99 TTFT (5m)",
+          "gridPos": {"x": 12, "y": 0, "w": 6, "h": 4},
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "targets": [
+            {
+              "expr": "inference:sli:ttft_p99_5m",
+              "legendFormat": "ttft",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "decimals": 3,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"color": "green", "value": null},
+                  {"color": "yellow", "value": 0.4},
+                  {"color": "red", "value": 0.5}
+                ]
+              }
+            }
+          }
+        },
+        {
+          "id": 4,
+          "type": "stat",
+          "title": "p99 TPOT (5m)",
+          "gridPos": {"x": 18, "y": 0, "w": 6, "h": 4},
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "targets": [
+            {
+              "expr": "inference:sli:tpot_p99_5m",
+              "legendFormat": "tpot",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "decimals": 4,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"color": "green", "value": null},
+                  {"color": "yellow", "value": 0.04},
+                  {"color": "red", "value": 0.05}
+                ]
+              }
+            }
+          }
+        },
+        {
+          "id": 5,
+          "type": "timeseries",
+          "title": "Burn Rates (threshold = 14.4 fast, 6 slow)",
+          "gridPos": {"x": 0, "y": 4, "w": 24, "h": 8},
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "targets": [
+            {"expr": "inference:slo:availability_burn_rate_1h", "legendFormat": "availability 1h", "refId": "A"},
+            {"expr": "inference:slo:ttft_burn_rate_1h",         "legendFormat": "ttft 1h",         "refId": "B"},
+            {"expr": "inference:slo:tpot_burn_rate_1h",         "legendFormat": "tpot 1h",         "refId": "C"}
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 10},
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"color": "green", "value": null},
+                  {"color": "yellow", "value": 6},
+                  {"color": "red", "value": 14.4}
+                ]
+              },
+              "custom.thresholdsStyle": {"mode": "line+area"}
+            }
+          },
+          "options": {"legend": {"placement": "bottom", "displayMode": "table", "calcs": ["last", "max"]}}
+        },
+        {
+          "id": 6,
+          "type": "timeseries",
+          "title": "p99 TTFT history (SLO: < 500ms)",
+          "gridPos": {"x": 0, "y": 12, "w": 12, "h": 8},
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "targets": [
+            {"expr": "inference:sli:ttft_p99_5m", "legendFormat": "p99 TTFT", "refId": "A"}
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 15},
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"color": "green", "value": null},
+                  {"color": "red", "value": 0.5}
+                ]
+              },
+              "custom.thresholdsStyle": {"mode": "line"}
+            }
+          }
+        },
+        {
+          "id": 7,
+          "type": "timeseries",
+          "title": "p99 TPOT history (SLO: < 50ms)",
+          "gridPos": {"x": 12, "y": 12, "w": 12, "h": 8},
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "targets": [
+            {"expr": "inference:sli:tpot_p99_5m", "legendFormat": "p99 TPOT", "refId": "A"}
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 15},
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"color": "green", "value": null},
+                  {"color": "red", "value": 0.05}
+                ]
+              },
+              "custom.thresholdsStyle": {"mode": "line"}
+            }
+          }
+        },
+        {
+          "id": 8,
+          "type": "timeseries",
+          "title": "Queue depth + Running requests",
+          "gridPos": {"x": 0, "y": 20, "w": 12, "h": 8},
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "targets": [
+            {"expr": "vllm:num_requests_running{job=\"vllm-mock\"}", "legendFormat": "running", "refId": "A"},
+            {"expr": "vllm:num_requests_waiting{job=\"vllm-mock\"}", "legendFormat": "waiting (queue)", "refId": "B"}
+          ],
+          "fieldConfig": {"defaults": {"custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 10}}}
+        },
+        {
+          "id": 9,
+          "type": "gauge",
+          "title": "GPU KV cache usage",
+          "gridPos": {"x": 12, "y": 20, "w": 12, "h": 8},
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "targets": [
+            {"expr": "vllm:gpu_cache_usage_perc{job=\"vllm-mock\"}", "legendFormat": "cache", "refId": "A"}
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "min": 0,
+              "max": 1,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"color": "green", "value": null},
+                  {"color": "yellow", "value": 0.7},
+                  {"color": "red", "value": 0.9}
+                ]
+              }
+            }
+          }
+        }
+      ]
+    }

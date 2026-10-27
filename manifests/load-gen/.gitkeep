@@ -1,8 +1,0 @@
-# k6 load generator as a CronJob - sends conversation-shaped traffic
-# at vllm-mock /v1/chat/completions. Planned v0.1 patterns:
-#   - 60% short (prompt < 100 tokens, response < 200 tokens) - "chat"
-#   - 25% medium (prompt < 500, response < 1000) - "summarization"
-#   - 15% long  (prompt < 2000, response < 2000) - "doc Q&A"
-#
-# Burst arrival: Poisson around 3 req/s with 10% chance of a 30-second
-# burst at 20 req/s - exercises the queue-depth SLI realistically.

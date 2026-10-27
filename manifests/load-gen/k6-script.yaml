@@ -1,0 +1,99 @@
+---
+# k6 load generator for vllm-mock. ConfigMap holds the test script
+# (conversation-shaped traffic: 60% short, 25% medium, 15% long);
+# CronJob fires it every 5 minutes to keep a continuous but bursty
+# traffic pattern on the SLI histograms.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-script
+  namespace: inference
+data:
+  script.js: |
+    import http from 'k6/http';
+    import { check, sleep } from 'k6';
+
+    export const options = {
+      // Three waves across 4 minutes: ramp-up, steady, decay.
+      stages: [
+        { duration: '30s', target: 2 },
+        { duration: '3m',  target: 4 },
+        { duration: '30s', target: 0 },
+      ],
+      thresholds: {
+        http_req_failed: ['rate<0.01'],
+      },
+    };
+
+    const target = __ENV.VLLM_URL || 'http://vllm-mock.inference.svc:8000/v1/chat/completions';
+
+    function pickConversation() {
+      // 60% short, 25% medium, 15% long
+      const r = Math.random();
+      if (r < 0.60) return { prompt: 50,  max_tokens: 150 };
+      if (r < 0.85) return { prompt: 300, max_tokens: 800 };
+      return                { prompt: 1500, max_tokens: 1500 };
+    }
+
+    export default function () {
+      const c = pickConversation();
+      const body = JSON.stringify({
+        model: 'mistral-7b-instruct',
+        messages: [{ role: 'user', content: 'x '.repeat(c.prompt) }],
+        max_tokens: c.max_tokens,
+        stream: true,
+      });
+      const res = http.post(target, body, {
+        headers: { 'Content-Type': 'application/json' },
+        timeout: '60s',
+      });
+      check(res, { 'status is 2xx': (r) => r.status >= 200 && r.status < 300 });
+      sleep(0.2 + Math.random() * 1.5);
+    }
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: k6-loadgen
+  namespace: inference
+spec:
+  # Every 5 minutes a 4-minute run. Leaves a 1-minute gap so the
+  # Grafana panels show both load-on and idle periods.
+  schedule: '*/5 * * * *'
+  concurrencyPolicy: Replace
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      ttlSecondsAfterFinished: 300
+      template:
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsUser: 12345
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: k6
+              image: grafana/k6:0.54.0
+              args: [run, /scripts/script.js]
+              env:
+                - name: VLLM_URL
+                  value: http://vllm-mock.inference.svc:8000/v1/chat/completions
+              resources:
+                requests: {cpu: 50m, memory: 32Mi}
+                limits:   {cpu: 500m, memory: 128Mi}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: [ALL]
+              volumeMounts:
+                - name: script
+                  mountPath: /scripts
+          volumes:
+            - name: script
+              configMap:
+                name: k6-script
