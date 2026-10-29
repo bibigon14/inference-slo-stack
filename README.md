@@ -61,6 +61,9 @@ sre.dstepanov.dev.
   realistic conversation patterns
 - `docs/architecture.md` - request flow, OTEL instrumentation points,
   correlation story
+- `docs/incidents/` - post-mortems from running this stack in
+  production (first entry: [2026-10-27 vmalert CrashLoopBackOff
+  thundering herd](docs/incidents/2026-10-27-vmalert-crashloop.md))
 
 ## Live on the OCI VM
 
