@@ -31,9 +31,11 @@ spec:
         # Availability: fraction of requests that returned non-5xx
         - record: inference:sli:availability_ratio_5m
           expr: |
-            sum(rate(vllm:request_success_total{job="vllm-mock",status="success"}[5m]))
-            /
-            sum(rate(vllm:request_total{job="vllm-mock"}[5m]))
+            (
+              sum(rate(vllm:request_success_total{job="vllm-mock",status="success"}[5m]))
+              /
+              sum(rate(vllm:request_total{job="vllm-mock"}[5m]))
+            ) or on() vector(1)
 
         # p99 TTFT over 5m
         - record: inference:sli:ttft_p99_5m
