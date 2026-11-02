@@ -62,8 +62,9 @@ sre.dstepanov.dev.
 - `docs/architecture.md` - request flow, OTEL instrumentation points,
   correlation story
 - `docs/incidents/` - post-mortems from running this stack in
-  production (first entry: [2026-10-27 vmalert CrashLoopBackOff
-  thundering herd](docs/incidents/2026-10-27-vmalert-crashloop.md))
+  production:
+  - [2026-10-27 vmalert CrashLoopBackOff thundering herd](docs/incidents/2026-10-27-vmalert-crashloop.md) - 429 against vmsingle on rolling-restart overlap
+  - [2026-10-29 post-reboot CNI cascade](docs/incidents/2026-10-29-post-reboot-cni-cascade.md) - iptables backend mismatch after kernel upgrade stalled cluster-wide
 
 ## Live on the OCI VM
 
