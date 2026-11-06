@@ -65,6 +65,8 @@ sre.dstepanov.dev.
   production:
   - [2026-10-27 vmalert CrashLoopBackOff thundering herd](docs/incidents/2026-10-27-vmalert-crashloop.md) - 429 against vmsingle on rolling-restart overlap
   - [2026-10-29 post-reboot CNI cascade](docs/incidents/2026-10-29-post-reboot-cni-cascade.md) - iptables backend mismatch after kernel upgrade stalled cluster-wide
+- `docs/notes/` - shorter field notes on specific failure modes extracted from the incidents above:
+  - [2026-10-29 iptables-nft vs iptables-legacy](docs/notes/2026-10-29-iptables-nft-vs-legacy.md) - 30-second diagnosis and fix for the mechanical cause of the 10/29 CNI cascade
 
   Both incidents got written up by hand - mechanical enough that it drove the
   sibling [incident-timeline-generator](https://github.com/bibigon14/incident-timeline-generator)

@@ -199,3 +199,4 @@ path keep the stack functional in the interim.
 - [k3s GitHub issue - iptables nft/legacy compatibility](https://github.com/k3s-io/k3s/issues/8912)
 - [Cilium docs - Kube-proxy replacement bootstrap](https://docs.cilium.io/en/stable/network/kubernetes/kubeproxy-free/#kubernetes-api-server-connectivity)
 - Previous incident: [2026-10-27 vmalert CrashLoopBackOff](2026-10-27-vmalert-crashloop.md)
+- Field note: [iptables-nft vs iptables-legacy backend mismatch](../notes/2026-10-29-iptables-nft-vs-legacy.md) - the 30-second diagnosis and fix for the mechanical failure mode this incident hit
