@@ -66,6 +66,11 @@ sre.dstepanov.dev.
   - [2026-10-27 vmalert CrashLoopBackOff thundering herd](docs/incidents/2026-10-27-vmalert-crashloop.md) - 429 against vmsingle on rolling-restart overlap
   - [2026-10-29 post-reboot CNI cascade](docs/incidents/2026-10-29-post-reboot-cni-cascade.md) - iptables backend mismatch after kernel upgrade stalled cluster-wide
 
+  Both incidents got written up by hand - mechanical enough that it drove the
+  sibling [incident-timeline-generator](https://github.com/bibigon14/incident-timeline-generator)
+  CLI, which reconstructs the first-draft skeleton from kubectl events,
+  Prometheus `ALERTS` transitions, git commits, and systemd journal entries.
+
 ## Live on the OCI VM
 
 Deployed end-to-end on the shared Oracle Cloud Ampere A1 free-tier VM.
@@ -149,3 +154,4 @@ up red when the load generator starts injecting latency.
 - [gpu-observability-eks](https://github.com/bibigon14/gpu-observability-eks) - GPU-side observability (DCGM, standalone nvidia-device-plugin, real vLLM on T4). This repo is the request-side companion.
 - [vm-observability](https://github.com/bibigon14/vm-observability) - metrics backend these alerts fire into
 - [otel-logs-traces-stack](https://github.com/bibigon14/otel-logs-traces-stack) - logs + traces half; correlation link from alert -> trace -> log is wired up through Grafana datasource links
+- [incident-timeline-generator](https://github.com/bibigon14/incident-timeline-generator) - Go CLI that produced the post-mortem skeletons for the two incidents linked above; grew out of this repo
