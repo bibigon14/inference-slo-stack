@@ -200,3 +200,57 @@ path keep the stack functional in the interim.
 - [Cilium docs - Kube-proxy replacement bootstrap](https://docs.cilium.io/en/stable/network/kubernetes/kubeproxy-free/#kubernetes-api-server-connectivity)
 - Previous incident: [2026-10-27 vmalert CrashLoopBackOff](2026-10-27-vmalert-crashloop.md)
 - Field note: [iptables-nft vs iptables-legacy backend mismatch](../notes/2026-10-29-iptables-nft-vs-legacy.md) - the 30-second diagnosis and fix for the mechanical failure mode this incident hit
+
+## Addendum - 2026-11-08 follow-up on open items
+
+**Status**: the three vmoperator-managed pods flagged as "Open items" above
+(vmoperator, vmagent, vmalertmanager) remained in CrashLoopBackOff for the
+full 10 days between incident resolution and this follow-up. Multiple
+remediation attempts were tried and each one failed:
+
+- `kubectl delete pod` on the operator (new pod, new IP, fresh Cilium
+  endpoint registration): same `dial tcp 10.43.0.1:443: i/o timeout` on
+  the new pod within 30 seconds
+- Full Cilium agent pod restart on the node: DaemonSet reconciled a new
+  agent cleanly, Cilium `endpoint list` showed all vm-namespace pods as
+  `ready`, but connectivity remained broken
+- Delete-all-vm-pods + wait for Cilium reattach: operator came up briefly
+  then went straight back into CrashLoop
+- Full k3s restart: iptables rules rebuilt, embedded kube-proxy restarted,
+  no change in outcome
+
+Diagnostic signal captured from an ephemeral `netshoot` debug pod in the
+vm namespace:
+
+- `ping cilium_host (10.42.0.128)` worked fine (0.08ms local hop)
+- `nc -z 10.43.0.1 443` (apiserver ClusterIP) timed out
+- `nc -z 10.0.1.79 6443` (apiserver's own node IP, direct, bypassing kube
+  DNAT) returned "Host is unreachable" from the kernel
+- `ip route` in the pod showed the correct `default via 10.42.0.128 dev
+  eth0` so routing config was present
+
+In contrast, vmsingle and vmalert in the same namespace stayed Running
+throughout, because neither of them needs to talk to the apiserver after
+the init stage - and their inbound readiness probes come from the node
+network via the pod IP directly, which does work.
+
+Interpretation: something in the Cilium datapath between `cilium_host`
+and the broader host network is persistently misconfigured for these pod
+flows specifically, and none of the surface-level fixes (restart, reset,
+recreate) touch it. This is below the level the on-call toolkit normally
+reaches. Resolution requires either a full Cilium reinstall on the node
+(which drops the eBPF state entirely and rebuilds from Helm/config) or
+a migration to a different CNI, both of which are larger exercises than
+this incident deserves standalone.
+
+**Decision**: deferred to its own work item - "OCI VM Cilium datapath
+rebuild" - rather than keep burning cycles. The three affected
+Deployments / StatefulSets have been scaled to 0 replicas to stop the
+restart loop. The cluster continues to serve vmsingle + vmalert, which
+covers the SLO stack's live-query surface.
+
+Lesson for the top-level post-mortem: "CNI cascade recovered" is not
+binary. The cluster can come back to apparently healthy while a specific
+subset of pods remains silently broken for weeks. Add a post-recovery
+check that walks every namespace's pods and confirms outbound
+connectivity to the apiserver, not just pod readiness.
