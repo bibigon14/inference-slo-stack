@@ -254,3 +254,84 @@ binary. The cluster can come back to apparently healthy while a specific
 subset of pods remains silently broken for weeks. Add a post-recovery
 check that walks every namespace's pods and confirms outbound
 connectivity to the apiserver, not just pod readiness.
+
+---
+
+## Addendum 2026-11-08: root cause and resolution
+
+Eleven days after the pods were scaled to zero, the "OCI VM Cilium
+datapath rebuild" work item was reopened with the intent of reinstalling
+Cilium. Before touching the CNI, a last check was done on the host's
+own packet filter.
+
+`nft list ruleset` on the node showed the default Oracle Ubuntu
+nftables policy still in place, with a catch-all reject at the bottom
+of the `ip filter FORWARD` chain:
+
+```
+chain FORWARD {
+    type filter hook forward priority filter; policy accept;
+    counter packets 995352 bytes 44791278 reject with icmp host-prohibited
+    ...
+}
+```
+
+The counter on that single rule had accumulated **995352 packets over
+10 days** - almost exactly the pod-to-apiserver traffic that had been
+silently failing. The INPUT chain carried the same shape and was
+dropping pod-to-node-IP flows alongside it. Both chains had been in
+place since first boot of the VM; they only started mattering after
+the 10/29 reboot cascade, when Cilium switched to a datapath layout
+that traverses FORWARD for a subset of pod flows.
+
+**Root cause (revised).** The CNI datapath was never broken. Cilium's
+tunnel/vxlan mode on this single-node cluster was routing pod traffic
+through the `cilium_host` veth into the host network stack, where the
+host firewall - Oracle's default Ubuntu nftables ruleset, untouched
+since VM provisioning - was dropping it with `icmp host-prohibited`.
+The three pods that stayed broken (vmoperator, vmagent, vmalertmanager)
+are the ones that initiate outbound connections to the apiserver;
+vmsingle and vmalert did not, which is why they stayed Running and
+masked the real failure mode.
+
+**Why none of the on-call toolkit fixes worked.** `systemctl restart
+k3s`, `kubectl delete` on cilium / operator / all vm pods, and the
+cilium ConfigMap flips all operate inside Kubernetes and inside the
+Cilium eBPF datapath. None of them touch the host's nftables ruleset,
+which is managed by `nftables.service` at a layer below everything the
+cluster rebuilds.
+
+**Fix.** Three accept rules inserted ahead of the reject counters,
+whitelisting the pod CIDR in both directions:
+
+```
+chain INPUT {
+    ip saddr 10.42.0.0/16 counter accept    # pod -> host (apiserver, kubelet probes)
+    ...
+    counter reject with icmp host-prohibited
+}
+chain FORWARD {
+    ip saddr 10.42.0.0/16 counter accept    # pod -> external via host
+    ip daddr 10.42.0.0/16 counter accept    # host/service -> pod
+    ...
+    counter reject with icmp host-prohibited
+}
+```
+
+Applied first with `nft insert` for immediate effect, then persisted to
+`/etc/nftables.conf` via an idempotent Python patch with a backup copy
+and `nft -c -f` syntax check before reload. All five vm-namespace pods
+went Running within 60 seconds; the three scaled-to-zero Deployments
+were restored to their original replica counts.
+
+**Updated lesson for the top-level post-mortem.** The original lesson
+("CNI cascade recovered is not binary") stands, but the post-recovery
+check needs to cover one more layer: after any reboot or CNI
+rebuild on a fresh cloud VM, dump the host's nftables / iptables
+ruleset and confirm it does not reject traffic from the pod CIDR.
+Oracle, AWS, and GCP all ship default host firewalls on their Ubuntu
+images; none of them are aware that a CNI is about to route pod
+traffic through the host's FORWARD chain. The check belongs in the
+node-bootstrap runbook, not in the CNI troubleshooting section,
+because by the time a pod is failing the signal is too far from the
+cause.
